@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tips Board — daily ops</title>
-  <link rel="stylesheet" href="/static/style.css" />
+  <link rel="stylesheet" href="/static/style.css?v=20260330" />
 </head>
 <body>
   <header class="header">
@@ -135,9 +135,9 @@
       <section class="card hidden banner-smtp-warn" id="smtp-not-ready">
         <h2>Email not configured</h2>
         <p id="smtp-not-ready-body" class="hint">
-          Set SMTP variables in <code>CLOVER_Tips/.env</code> or <code>tip_dashboard/.env</code>, then <strong>restart the server</strong> (Ctrl+C, then <code>uvicorn</code> again).
+          Set email env vars and restart the server (Ctrl+C, then <code>uvicorn</code>), or redeploy on Render.
         </p>
-        <p class="hint"><strong>Gmail:</strong> <code>SMTP_HOST=smtp.gmail.com</code>, <code>SMTP_PORT=587</code>, your address as <code>SMTP_USERNAME</code> / <code>SMTP_FROM_EMAIL</code>, and an <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener">App password</a> as <code>SMTP_PASSWORD</code> (not your normal Gmail password if 2FA is on).</p>
+        <p class="hint"><strong>Render free:</strong> outbound SMTP is blocked — use <code>RESEND_API_KEY</code> + <code>RESEND_FROM_EMAIL</code> (<a href="https://resend.com" target="_blank" rel="noopener">resend.com</a>). <strong>Local / Gmail:</strong> <code>SMTP_*</code> + <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener">app password</a>.</p>
       </section>
       <section class="card">
         <h2>Confirm &amp; Send</h2>
@@ -156,10 +156,14 @@
       </section>
       <section class="card" id="confirm-actions-section">
         <p class="hint">
-          Click <strong>Load preview</strong> above to review numbers first (recommended). You can still confirm without it — the server uses the same shifts and manual rules as the Daily tab.
-          Saves to SQLite and sends email (configure SMTP in <code>.env</code>).
+          <strong>1 — Confirm day (save only):</strong> writes the day to SQLite from the same shifts / manual rules as the Daily tab (preview optional).
+          <strong>2 — Send emails:</strong> uses the <em>saved</em> data for this work date — run step 1 first if you changed numbers.
+          Email: <code>RESEND_API_KEY</code> on Render free, or <code>SMTP_*</code> when SMTP is allowed.
         </p>
-        <button type="button" class="btn btn-success" id="btn-confirm-send">Confirm Today’s Shifts and Send Emails</button>
+        <div class="row row-wrap" style="gap:0.5rem;">
+          <button type="button" class="btn btn-success" id="btn-confirm-save">Confirm day (save only)</button>
+          <button type="button" class="btn btn-primary" id="btn-confirm-send-emails">Send emails</button>
+        </div>
         <div id="confirm-result" class="confirm-result" role="status" aria-live="polite"></div>
       </section>
     </div>
@@ -218,12 +222,12 @@
   </main>
 
   <footer class="footer">
-    <span>Tips Board · SQLite · SMTP</span>
+    <span>Tips Board · SQLite · email (Resend or SMTP)</span>
   </footer>
 
   <script>
     window.__EMPLOYEES__ = {{ employees | tojson }};
   </script>
-  <script src="/static/app.js"></script>
+  <script src="/static/app.js?v=20260330"></script>
 </body>
 </html>

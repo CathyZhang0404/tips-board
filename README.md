@@ -20,17 +20,16 @@ Small **local** web app: pull payments from the **Clover REST API**, enter emplo
 |----------|---------|--------|
 | `APP_TIMEZONE` | `America/New_York` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for “which calendar day is this?” and for interpreting shift `HH:MM`. **Set this on Render** — the server defaults to **UTC**, so without it your shifts won’t line up with real payment times and tips can show **Unassigned**. |
 
-**SMTP (required to actually send mail)**
+**Email — pick one transport**
 
-| Variable | Example |
-|----------|---------|
-| `SMTP_HOST` | e.g. `smtp.gmail.com` |
-| `SMTP_PORT` | e.g. `587` (TLS) |
-| `SMTP_USERNAME` | SMTP login user |
-| `SMTP_PASSWORD` | app password or SMTP secret |
-| `SMTP_FROM_EMAIL` | From address (often same as username) |
+| Mode | Variables | When to use |
+|------|-----------|-------------|
+| **SMTP** | `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL` | **Local / laptop** (Gmail app password, etc.) |
+| **Resend API** | `RESEND_API_KEY`, `RESEND_FROM_EMAIL` (or reuse `SMTP_FROM_EMAIL`) | **Render free tier** — Render [blocks outbound SMTP](https://render.com/changelog/free-web-services-will-no-longer-allow-outbound-traffic-to-smtp-ports) on free web services; HTTPS APIs still work. Sign up at [resend.com](https://resend.com), create an API key, verify a domain or use their test sender. |
 
-**Gmail:** use an [App password](https://support.google.com/accounts/answer/185833) for `SMTP_PASSWORD` if 2-step verification is on (not your normal Gmail password). After editing `.env`, **restart uvicorn** so new variables load.
+If **`RESEND_API_KEY`** is set, the app **uses Resend only** and ignores SMTP for sending.
+
+**Gmail SMTP:** use an [App password](https://support.google.com/accounts/answer/185833) for `SMTP_PASSWORD` if 2-step verification is on. After editing `.env`, **restart uvicorn** so new variables load.
 
 See **`tip_dashboard/.env.example`** for a template.
 
@@ -111,7 +110,8 @@ If your Git repo is the whole **`ds_projects`** (or **`CLOVER_Tips`**) folder in
    - `CLOVER_MERCHANT_ID`
    - `CLOVER_API_TOKEN`
    - **`APP_TIMEZONE`** (e.g. `America/New_York`) — **required** for correct tips on Render (UTC default)
-   - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
+   - **On Render free:** `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (SMTP to Gmail **will not work** — ports blocked).
+   - **Local / paid Render:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
    - Optional: `MANAGER_EMAIL`, `TEST_MODE_EMAIL_ONLY` (see table above)
 
    Use **Secret** / **mask** toggles for tokens and passwords.
@@ -138,14 +138,14 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 - [ ] Deploy succeeded (green live)
 - [ ] Homepage loads on the Render URL
 - [ ] **Refresh Clover data** works on the Daily tab
-- [ ] **Confirm & Send** / email test works (SMTP vars correct)
+- [ ] **Confirm & Send** (save + send emails) works (SMTP / Resend configured)
 
 ## UI tabs
 
 | Tab | Purpose |
 |-----|---------|
 | **Daily Tips Board** | Date, Clover refresh, shifts, manual splits, **Calculate**, exports |
-| **Confirm & Send** | Preview reconciliation and per-employee totals, then **Confirm today’s shifts and send emails** |
+| **Confirm & Send** | Preview, **Confirm day (save)**, then **Send emails** (two steps) |
 | **Weekly Summary** | **Monday–Sunday** week; pick any day in the week — hours by employee (confirmed only) + CSV |
 | **Two-Week Summary** | Two full **Mon–Sun** weeks from the Monday of the week you pick + CSV |
 | **Employee Email Settings** | Manager email, per-employee emails, **Test mode** toggle |
@@ -155,9 +155,9 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 ## Daily workflow
 
 1. On **Daily Tips Board**: pick date, **Refresh Clover data**, enter shifts, optional manual splits, **Calculate**.
-2. Open **Confirm & Send**, set **Work date** (syncs from the daily date when you switch tabs), **Load preview**.
-3. Click **Confirm today’s shifts and send emails**.  
-   - If that date was already confirmed, the app returns **409** and the browser asks whether to **overwrite** and resend.  
+2. Open **Confirm & Send**, set **Work date** (syncs from the daily date when you switch tabs), optional **Load preview**.
+3. **Confirm day (save only)** — writes SQLite; no email. If that date was already saved, **409** → browser asks to **overwrite**.
+4. **Send emails** — sends from **saved** data for that work date. If emails were already sent, **409** → choose **resend** to send again.  
    - Only employees with **at least one shift block** receive an email (even if tips are $0).  
    - One **manager summary** is sent with per-employee lines plus totals and reconciliation figures.
 
@@ -176,7 +176,8 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 - `POST /api/settings` — save (validates email format)
 - `GET /api/confirm/status?date=YYYY-MM-DD`
 - `POST /api/confirm/preview` — same body as calculate; preview JSON
-- `POST /api/confirm/send` — body adds `overwrite` (bool); saves SQLite rows then sends mail
+- `POST /api/confirm/save` — same body as calculate + `overwrite`; saves SQLite only (no mail)
+- `POST /api/confirm/send-emails` — body `{ "work_date": "YYYY-MM-DD", "resend": false }`; sends mail from saved rows; `resend: true` if already sent
 
 **Summaries & CSV** (weeks are **Monday–Sunday**; any date in the week is normalized to that week’s Monday)
 
@@ -190,4 +191,4 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 - Clover `createdTime` is in **milliseconds**; the backend uses **`APP_TIMEZONE`** if set, otherwise the **machine’s local timezone**, for calendar-day bounds and shift matching.
 - Comparisons use **minute** precision; shift start/end are **inclusive** for overlap.
 - Tip splitting uses **whole cents**; remainder cents are assigned deterministically (alphabetical by name).
-- Email sending is in **`email_service.py`**; if one employee send fails, others still run; the UI lists failures.
+- Email sending is in **`email_service.py`** (Resend API if `RESEND_API_KEY`, else SMTP). If one employee send fails, others still run; the UI lists failures.

@@ -266,6 +266,34 @@ def insert_confirmation_bundle(
     return log_id
 
 
+def list_confirmed_daily_records(work_date: str) -> list[dict[str, Any]]:
+    """Rows for one work_date (for resending emails from saved confirmation)."""
+    with get_conn() as conn:
+        rows = conn.execute(
+            """
+            SELECT employee_name, shift_blocks_json, hours_worked, tip_allocated_cents, confirmed_at
+            FROM confirmed_daily_record
+            WHERE work_date = ?
+            ORDER BY employee_name
+            """,
+            (work_date,),
+        ).fetchall()
+    return [dict(r) for r in rows]
+
+
+def update_confirmation_email_stats(log_id: int, email_sent_count: int, manager_email_sent: int) -> None:
+    with get_conn() as conn:
+        conn.execute(
+            """
+            UPDATE daily_confirmation_log
+            SET email_sent_count = ?, manager_email_sent = ?
+            WHERE id = ?
+            """,
+            (email_sent_count, manager_email_sent, log_id),
+        )
+        conn.commit()
+
+
 # --- Summaries (confirmed data only) ---
 
 

@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import io
+import json
 import logging
 import math
 import os
@@ -88,6 +89,16 @@ async def _lifespan(_app: FastAPI):
 app = FastAPI(title="Tip allocation dashboard", lifespan=_lifespan)
 templates = Jinja2Templates(directory=str(BASE_DIR / "templates"))
 app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="static")
+
+
+@app.middleware("http")
+async def _no_cache_static(request: Request, call_next):
+    """Avoid stale JS/CSS after deploy (browsers often cache /static/* aggressively)."""
+    response = await call_next(request)
+    if request.url.path.startswith("/static/"):
+        response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
+        response.headers["Pragma"] = "no-cache"
+    return response
 
 
 # -----------------------------------------------------------------------------
@@ -599,10 +610,20 @@ class CalculateIn(BaseModel):
     )
 
 
-class ConfirmSendIn(CalculateIn):
-    """Same payload as calculate, plus overwrite when re-confirming a day."""
+class ConfirmSaveIn(CalculateIn):
+    """Save confirmation to SQLite only (no email). ``overwrite`` replaces an existing day."""
 
     overwrite: bool = False
+
+
+class SendEmailsIn(BaseModel):
+    """Send emails for an already-confirmed day (uses saved SQLite rows)."""
+
+    work_date: str = Field(..., description="YYYY-MM-DD")
+    resend: bool = Field(
+        False,
+        description="If emails were already sent for this date, set true to send again.",
+    )
 
 
 class AppSettingsPayload(BaseModel):
@@ -788,6 +809,114 @@ def _resolve_recipient(
     if not em:
         return mgr, f"{employee_name} (fallback)"
     return em, employee_name
+
+
+def _preview_rows_from_stored_records(records: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Build same shape as _build_confirm_preview rows from ``confirmed_daily_record`` rows."""
+    out: list[dict[str, Any]] = []
+    for r in records:
+        blocks = json.loads(r["shift_blocks_json"] or "[]")
+        cents = int(r["tip_allocated_cents"])
+        out.append(
+            {
+                "name": r["employee_name"],
+                "blocks": blocks,
+                "hours_worked": float(r["hours_worked"]),
+                "tip_allocated_cents": cents,
+                "tip_allocated_dollars": cents / 100.0,
+            }
+        )
+    return out
+
+
+def _financials_from_confirmation_log(log: dict[str, Any]) -> dict[str, Any]:
+    """Match keys used by manager summary email and allocation display."""
+    return {
+        "allocated_employee_total_dollars": log["allocated_employee_total_cents"] / 100.0,
+        "unassigned_total_dollars": log["unassigned_tips_cents"] / 100.0,
+        "clover_total_tips_dollars": log["clover_total_tips_cents"] / 100.0,
+        "reconciliation_difference_dollars": log["reconciliation_diff_cents"] / 100.0,
+    }
+
+
+def _send_confirmation_emails_bundle(
+    work_date: str,
+    preview_rows: list[dict[str, Any]],
+    result: dict[str, Any],
+    log_id: int,
+) -> dict[str, Any]:
+    """Send employee + manager emails and persist counts on ``daily_confirmation_log``."""
+    manager_email = database.get_manager_email()
+    test_mode = database.get_test_mode()
+    emp_emails = database.get_employee_email_map()
+    email_results: list[dict[str, Any]] = []
+    sent_employee = 0
+
+    for r in preview_rows:
+        name = r["name"]
+        to_addr, subject_tag = _resolve_recipient(
+            name, emp_emails.get(name, ""), manager_email, test_mode
+        )
+        shift_line = _format_blocks_ampm(r["blocks"])
+        body_txt = (
+            f"Hi {name},\n\n"
+            f"Here is your work summary for today:\n\n"
+            f"Date: {work_date}\n"
+            f"Shift: {shift_line}\n"
+            f"Hours worked: {r['hours_worked']:.2f}\n"
+            f"Tips allocated: ${r['tip_allocated_dollars']:.2f}\n\n"
+            f"Thank you.\n"
+        )
+        subj = (
+            f"[TEST] Daily Work Summary for {subject_tag}"
+            if test_mode
+            else "Your work summary for today"
+        )
+        try:
+            email_service.send_plain_email(to_addr, subj, body_txt)
+            email_results.append({"employee": name, "to": to_addr, "ok": True, "error": None})
+            sent_employee += 1
+        except Exception as exc:  # pragma: no cover - network
+            email_results.append({"employee": name, "to": to_addr, "ok": False, "error": str(exc)})
+
+    mgr_lines = [
+        f"Daily Summary - {work_date}",
+        "",
+        "Per employee:",
+    ]
+    for r in preview_rows:
+        mgr_lines.append(
+            f"{r['name']}: {r['hours_worked']:.2f} hours, ${r['tip_allocated_dollars']:.2f} tips"
+        )
+    mgr_lines.extend(
+        [
+            "",
+            f"Employees worked (with shifts): {len(preview_rows)}",
+            f"Total allocated tips: ${result['allocated_employee_total_dollars']:.2f}",
+            f"Total unassigned tips: ${result['unassigned_total_dollars']:.2f}",
+            f"Clover total tips (day): ${result['clover_total_tips_dollars']:.2f}",
+            f"Reconciliation difference: ${result['reconciliation_difference_dollars']:.2f}",
+        ]
+    )
+    mgr_body = "\n".join(mgr_lines)
+    mgr_subj = f"[TEST] Manager Daily Summary - {work_date}" if test_mode else f"Daily Summary - {work_date}"
+    mgr_ok = False
+    mgr_err: str | None = None
+    try:
+        email_service.send_plain_email(manager_email, mgr_subj, mgr_body)
+        mgr_ok = True
+    except Exception as exc:
+        mgr_err = str(exc)
+
+    database.update_confirmation_email_stats(log_id, sent_employee, 1 if mgr_ok else 0)
+
+    return {
+        "employee_emails": email_results,
+        "employee_emails_sent_ok": sent_employee,
+        "manager_email_sent": mgr_ok,
+        "manager_email_error": mgr_err,
+        "test_mode": test_mode,
+    }
 
 
 # -----------------------------------------------------------------------------
@@ -1011,8 +1140,9 @@ async def api_confirm_preview(body: CalculateIn) -> JSONResponse:
     )
 
 
-@app.post("/api/confirm/send")
-async def api_confirm_send(body: ConfirmSendIn) -> JSONResponse:
+@app.post("/api/confirm/save")
+async def api_confirm_save(body: ConfirmSaveIn) -> JSONResponse:
+    """Persist confirmation only; does not send email. Use ``/api/confirm/send-emails`` next."""
     try:
         target, shifts_plain, _mm, result = _execute_calculate(body)
     except HTTPException:
@@ -1025,7 +1155,7 @@ async def api_confirm_send(body: ConfirmSendIn) -> JSONResponse:
             status_code=409,
             detail={
                 "message": f"This date ({work_date}) is already confirmed at {existing['confirmed_at']}. "
-                "Submit again with overwrite=true to replace records and resend emails.",
+                "Submit again with overwrite=true to replace saved records.",
                 "requires_overwrite": True,
                 "confirmed_at": existing["confirmed_at"],
             },
@@ -1038,22 +1168,11 @@ async def api_confirm_send(body: ConfirmSendIn) -> JSONResponse:
             detail="No employees with shift blocks — nothing to confirm.",
         )
 
-    manager_email = database.get_manager_email()
-    test_mode = database.get_test_mode()
-    emp_emails = database.get_employee_email_map()
-
     confirmed_at = datetime.now(timezone.utc).isoformat()
     overwrite_flag = 1 if (existing and body.overwrite) else 0
 
     if existing and body.overwrite:
         database.delete_confirmation_for_date(work_date)
-
-    # --- Send emails before DB insert so we can report failures (still save if partial?) ---
-    # User asked: save records and send — we save after successful sends, or save anyway?
-    # Spec: "save the final confirmed daily records" then send — if send fails, still save?
-    # Practical: save to DB first, then send (so data isn't lost). User can resend manually later.
-    # Alternative: send first then save — if DB fails emails already went.
-    # We save first, then send emails, then update log counts (or store counts from send result).
 
     per_employee_db = [
         {
@@ -1078,89 +1197,65 @@ async def api_confirm_send(body: ConfirmSendIn) -> JSONResponse:
         manager_sent=0,
     )
 
-    email_results: list[dict[str, Any]] = []
-    sent_employee = 0
-
-    for r in preview_rows:
-        name = r["name"]
-        to_addr, subject_tag = _resolve_recipient(
-            name, emp_emails.get(name, ""), manager_email, test_mode
-        )
-        shift_line = _format_blocks_ampm(r["blocks"])
-        body_txt = (
-            f"Hi {name},\n\n"
-            f"Here is your work summary for today:\n\n"
-            f"Date: {work_date}\n"
-            f"Shift: {shift_line}\n"
-            f"Hours worked: {r['hours_worked']:.2f}\n"
-            f"Tips allocated: ${r['tip_allocated_dollars']:.2f}\n\n"
-            f"Thank you.\n"
-        )
-        subj = (
-            f"[TEST] Daily Work Summary for {subject_tag}"
-            if test_mode
-            else "Your work summary for today"
-        )
-        try:
-            email_service.send_plain_email(to_addr, subj, body_txt)
-            email_results.append({"employee": name, "to": to_addr, "ok": True, "error": None})
-            sent_employee += 1
-        except Exception as exc:  # pragma: no cover - network
-            email_results.append({"employee": name, "to": to_addr, "ok": False, "error": str(exc)})
-
-    mgr_lines = [
-        f"Daily Summary - {work_date}",
-        "",
-        "Per employee:",
-    ]
-    for r in preview_rows:
-        mgr_lines.append(
-            f"{r['name']}: {r['hours_worked']:.2f} hours, ${r['tip_allocated_dollars']:.2f} tips"
-        )
-    mgr_lines.extend(
-        [
-            "",
-            f"Employees worked (with shifts): {len(preview_rows)}",
-            f"Total allocated tips: ${result['allocated_employee_total_dollars']:.2f}",
-            f"Total unassigned tips: ${result['unassigned_total_dollars']:.2f}",
-            f"Clover total tips (day): ${result['clover_total_tips_dollars']:.2f}",
-            f"Reconciliation difference: ${result['reconciliation_difference_dollars']:.2f}",
-        ]
+    return JSONResponse(
+        {
+            "ok": True,
+            "message": "Day confirmed and saved. Use “Send emails” when you are ready.",
+            "work_date": work_date,
+            "confirmed_at": confirmed_at,
+            "overwrite": bool(overwrite_flag),
+            "log_id": log_id,
+        }
     )
-    mgr_body = "\n".join(mgr_lines)
-    mgr_subj = f"[TEST] Manager Daily Summary - {work_date}" if test_mode else f"Daily Summary - {work_date}"
-    mgr_ok = False
-    mgr_err: str | None = None
-    try:
-        email_service.send_plain_email(manager_email, mgr_subj, mgr_body)
-        mgr_ok = True
-    except Exception as exc:
-        mgr_err = str(exc)
 
-    # Update log counts
-    with database.get_conn() as conn:
-        conn.execute(
-            """
-            UPDATE daily_confirmation_log
-            SET email_sent_count = ?, manager_email_sent = ?
-            WHERE id = ?
-            """,
-            (sent_employee, 1 if mgr_ok else 0, log_id),
+
+@app.post("/api/confirm/send-emails")
+async def api_confirm_send_emails(body: SendEmailsIn) -> JSONResponse:
+    """Send employee + manager emails using data already saved for ``work_date``."""
+    try:
+        wd = _parse_date(body.work_date.strip())
+    except HTTPException:
+        raise
+    work_date = wd.isoformat()
+
+    log = database.get_confirmation_for_date(work_date)
+    if not log:
+        raise HTTPException(
+            status_code=400,
+            detail="This date is not confirmed yet. Click “Confirm day (save only)” first.",
         )
-        conn.commit()
+
+    already_sent = (log.get("email_sent_count") or 0) > 0 or bool(log.get("manager_email_sent"))
+    if already_sent and not body.resend:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "message": f"Emails were already sent for {work_date} (employee count={log.get('email_sent_count')}). "
+                "Submit again with resend=true to send again.",
+                "requires_resend": True,
+            },
+        )
+
+    records = database.list_confirmed_daily_records(work_date)
+    if not records:
+        raise HTTPException(
+            status_code=400,
+            detail="No saved rows for this date — confirm the day again.",
+        )
+
+    preview_rows = _preview_rows_from_stored_records(records)
+    fin = _financials_from_confirmation_log(log)
+    log_id = int(log["id"])
+
+    sent = _send_confirmation_emails_bundle(work_date, preview_rows, fin, log_id)
 
     return JSONResponse(
         {
             "ok": True,
-            "message": "Day confirmed and emails processed.",
+            "message": "Emails processed.",
             "work_date": work_date,
-            "confirmed_at": confirmed_at,
-            "overwrite": bool(overwrite_flag),
-            "employee_emails": email_results,
-            "employee_emails_sent_ok": sent_employee,
-            "manager_email_sent": mgr_ok,
-            "manager_email_error": mgr_err,
-            "test_mode": test_mode,
+            "resend": bool(body.resend),
+            **sent,
         }
     )
 

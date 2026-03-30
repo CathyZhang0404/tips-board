@@ -521,10 +521,9 @@ function setConfirmResult(htmlOrText, asHtml) {
   else out.textContent = htmlOrText;
 }
 
-async function confirmSend(overwrite) {
+async function confirmSaveOnly(overwrite) {
   showBanner("error", "");
   const cd = el("confirm-date");
-  const out = el("confirm-result");
   if (!cd) {
     showBanner("error", "Missing work-date field. Hard-refresh the page (Cmd+Shift+R or Ctrl+Shift+R).");
     return;
@@ -553,11 +552,11 @@ async function confirmSend(overwrite) {
   }
 
   const body = { date: d, shifts, manual_rules, overwrite: !!overwrite };
-  setConfirmResult("Sending…", false);
-  showBanner("info", "Sending confirmation and emails…");
+  setConfirmResult("Saving…", false);
+  showBanner("info", "Saving confirmation to database…");
 
   try {
-    const res = await fetch("/api/confirm/send", {
+    const res = await fetch("/api/confirm/save", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
@@ -571,9 +570,61 @@ async function confirmSend(overwrite) {
       det409.requires_overwrite
     ) {
       const ok = window.confirm(
-        (det409.message || "Already confirmed.") + "\n\nOverwrite saved data and resend emails?"
+        (det409.message || "Already confirmed.") +
+          "\n\nOverwrite saved data for this day? (You can send emails afterward.)"
       );
-      if (ok) return confirmSend(true);
+      if (ok) return confirmSaveOnly(true);
+      setConfirmResult("Cancelled.", false);
+      showBanner("info", "");
+      return;
+    }
+    if (!res.ok) {
+      const errText =
+        typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || res.statusText);
+      setConfirmResult(errText, false);
+      showBanner("error", errText);
+      return;
+    }
+    const lines = [data.message, "Next: click “Send emails” when you want messages to go out."];
+    setConfirmResult(lines.map((l) => `<div>${l}</div>`).join(""), true);
+    showBanner("info", "Day saved. Send emails when ready.");
+  } catch (e) {
+    const msg = String(e);
+    setConfirmResult(msg, false);
+    showBanner("error", msg);
+  }
+}
+
+async function sendEmailsOnly(resend) {
+  showBanner("error", "");
+  const d = el("confirm-date")?.value;
+  if (!d) {
+    showBanner("error", "Pick a work date.");
+    setConfirmResult("Pick a work date first.", false);
+    return;
+  }
+
+  setConfirmResult("Sending emails…", false);
+  showBanner("info", "Sending emails…");
+
+  try {
+    const res = await fetch("/api/confirm/send-emails", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ work_date: d, resend: !!resend }),
+    });
+    const data = await res.json().catch(() => ({}));
+    const det409 = data.detail;
+    if (
+      res.status === 409 &&
+      det409 &&
+      typeof det409 === "object" &&
+      det409.requires_resend
+    ) {
+      const ok = window.confirm(
+        (det409.message || "Already sent.") + "\n\nSend all emails again?"
+      );
+      if (ok) return sendEmailsOnly(true);
       setConfirmResult("Cancelled.", false);
       showBanner("info", "");
       return;
@@ -597,7 +648,7 @@ async function confirmSend(overwrite) {
       }
     }
     setConfirmResult(lines.map((l) => `<div>${l}</div>`).join(""), true);
-    showBanner("info", "Confirmation complete. See details below.");
+    showBanner("info", "Email batch finished. See details below.");
   } catch (e) {
     const msg = String(e);
     setConfirmResult(msg, false);
@@ -813,7 +864,8 @@ function init() {
   el("set-test-mode")?.addEventListener("change", updateTestModeBanner);
   el("btn-save-settings")?.addEventListener("click", saveSettings);
   el("btn-confirm-preview")?.addEventListener("click", loadConfirmPreview);
-  el("btn-confirm-send")?.addEventListener("click", () => confirmSend(false));
+  el("btn-confirm-save")?.addEventListener("click", () => confirmSaveOnly(false));
+  el("btn-confirm-send-emails")?.addEventListener("click", () => sendEmailsOnly(false));
   el("btn-weekly-load")?.addEventListener("click", loadWeekly);
   el("btn-twoweek-load")?.addEventListener("click", loadTwoWeek);
 
