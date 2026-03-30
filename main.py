@@ -95,10 +95,11 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 
 
 @app.middleware("http")
-async def _no_cache_static(request: Request, call_next):
-    """Avoid stale JS/CSS after deploy (browsers often cache /static/* aggressively)."""
+async def _no_cache_static_and_shell(request: Request, call_next):
+    """Avoid stale HTML/JS/CSS after deploy (some CDNs cache ``/`` or ``/static/*``)."""
     response = await call_next(request)
-    if request.url.path.startswith("/static/"):
+    path = request.url.path
+    if path == "/" or path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
     return response
