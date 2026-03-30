@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tips Board — daily ops</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260401" />
+  <link rel="stylesheet" href="/static/style.css?v=20260402" />
 </head>
 <body>
   <header class="header">
@@ -50,7 +50,7 @@
 
     <section class="card" id="shifts-section">
       <h2>Shifts (15-minute steps, 24h)</h2>
-      <p class="hint">Start/end use <strong>15-minute</strong> steps (:00, :15, :30, :45). Add one or more blocks per employee; leave blank if they did not work. Bounds are <strong>inclusive</strong> for matching tip times.</p>
+      <p class="hint">Start/end are <strong>dropdowns</strong> with <strong>15-minute</strong> times only (:00, :15, :30, :45). Add one or more blocks per employee; leave as — if they did not work. Bounds are <strong>inclusive</strong> for matching tip times.</p>
       <div id="shift-panels"></div>
     </section>
 
@@ -228,6 +228,6 @@
   <script>
     window.__EMPLOYEES__ = {{ employees | tojson }};
   </script>
-  <script src="/static/app.js?v=20260401"></script>
+  <script src="/static/app.js?v=20260402"></script>
 </body>
 </html>

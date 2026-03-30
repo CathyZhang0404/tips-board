@@ -38,6 +38,40 @@ function mondayOfWeekContaining(isoYmd) {
 
 const el = (id) => document.getElementById(id);
 
+/** Must match backend ``TIME_GRID_MINUTES`` (15). */
+const SHIFT_SLOT_MINUTES = [0, 15, 30, 45];
+
+/**
+ * Dropdown for shift start/end — only 15-minute marks (no native time picker gaps).
+ * ``selectedRaw`` is ``HH:MM``; invalid or off-grid values show as unset (—).
+ */
+function shiftTimeSelectHtml(className, selectedRaw) {
+  const sel = (selectedRaw || "").trim();
+  const parts = sel.split(":");
+  const h = parts.length === 2 ? parseInt(parts[0], 10) : NaN;
+  const m = parts.length === 2 ? parseInt(parts[1], 10) : NaN;
+  const valid =
+    !Number.isNaN(h) &&
+    !Number.isNaN(m) &&
+    h >= 0 &&
+    h <= 23 &&
+    SHIFT_SLOT_MINUTES.includes(m);
+  const effective = valid
+    ? `${String(h).padStart(2, "0")}:${String(m).padStart(2, "0")}`
+    : "";
+
+  let opts = '<option value="">—</option>';
+  for (let hour = 0; hour < 24; hour++) {
+    for (const min of SHIFT_SLOT_MINUTES) {
+      const hh = String(hour).padStart(2, "0");
+      const mm = String(min).padStart(2, "0");
+      const v = `${hh}:${mm}`;
+      opts += `<option value="${v}"${v === effective ? " selected" : ""}>${v}</option>`;
+    }
+  }
+  return `<select class="${className} shift-time-select">${opts}</select>`;
+}
+
 function showBanner(which, message) {
   const err = el("global-error");
   const info = el("global-info");
@@ -97,10 +131,10 @@ function addShiftRow(employeeName, startVal = "", endVal = "") {
   row.className = "shift-row";
   row.innerHTML = `
     <label class="field"><span class="label">Start</span>
-      <input type="time" class="inp-start" step="900" value="${startVal}" />
+      ${shiftTimeSelectHtml("inp-start", startVal)}
     </label>
     <label class="field"><span class="label">End</span>
-      <input type="time" class="inp-end" step="900" value="${endVal}" />
+      ${shiftTimeSelectHtml("inp-end", endVal)}
     </label>
     <button type="button" class="btn btn-small shift-remove">Remove</button>
   `;

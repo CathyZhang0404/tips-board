@@ -118,12 +118,18 @@ body {
 }
 
 input[type="date"],
-input[type="time"] {
+input[type="time"],
+select.shift-time-select {
   font: inherit;
   padding: 0.45rem 0.55rem;
   border: 1px solid var(--border);
   border-radius: 6px;
   background: #fff;
+}
+
+select.shift-time-select {
+  min-width: 5.25rem;
+  cursor: pointer;
 }
 
 .btn {
