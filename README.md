@@ -1,6 +1,6 @@
 # Daily Tip Allocation Dashboard
 
-Small **local** web app: pull payments from the **Clover REST API**, enter employee shift blocks (**15-minute** steps), **split tips** by who was on the clock in the **same 15-minute slot** as each tipped payment (payment time floored to :00, :15, :30, :45), then **confirm** days, **persist** to SQLite, and **email** employees and the manager.
+Small **local** web app: pull payments from the **Clover REST API**, enter employee shift blocks (**15-minute** steps in the UI), **split tips** by who was on the clock at each tipped payment’s **local minute** (seconds ignored), then **confirm** days, **persist** to SQLite, and **email** employees and the manager.
 
 ## Setup
 
@@ -189,6 +189,6 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 ## Notes
 
 - Clover `createdTime` is in **milliseconds**; the backend uses **`APP_TIMEZONE`** if set, otherwise the **machine’s local timezone**, for calendar-day bounds and shift matching.
-- Shift blocks use **15-minute** steps (`:00`, `:15`, `:30`, `:45`). **Time-based** tips use the same grid: each payment’s local time is **floored** to the start of that window (e.g. 9:07 → 9:00, 9:22 → 9:15), then we ask who is on shift at that instant. Shift interval endpoints stay **inclusive** for that check.
+- Shift blocks use **15-minute** steps in the UI (`:00`, `:15`, `:30`, `:45`). **Time-based** tips still use **minute** precision: each payment’s local time is rounded down to the **minute** (no 15-minute snap), then we ask who is on shift in that inclusive interval.
 - Tip splitting uses **whole cents**; remainder cents are assigned deterministically (alphabetical by name).
 - Email sending is in **`email_service.py`** (Resend API if `RESEND_API_KEY`, else SMTP). If one employee send fails, others still run; the UI lists failures.

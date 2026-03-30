@@ -354,13 +354,9 @@ function renderTx(result) {
         t.allocation_mode === "manual"
           ? '<span class="mode-manual">manual</span>'
           : '<span class="mode-time">time</span>';
-      const slotLine =
-        t.allocation_mode === "time" && t.time_match_slot_local
-          ? `<br/><span class="muted">15m slot: ${t.time_match_slot_local}</span>`
-          : "";
       return `<tr>
         <td>${mode}</td>
-        <td>${t.created_at_local}${slotLine}</td>
+        <td>${t.created_at_local}</td>
         <td>${t.payment_id}</td>
         <td class="num">$${t.tip_amount_dollars.toFixed(2)}</td>
         <td>${workers}${shareLine}</td>

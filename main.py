@@ -2,7 +2,7 @@
 Daily tip allocation dashboard — FastAPI backend.
 
 Pulls Clover payments for a chosen *local* calendar day, then splits tips
-among employees who were on shift in the same 15-minute slot as each tipped payment.
+among employees who were on shift at each tipped payment minute (shift times are on a 15-minute grid in the UI only).
 """
 
 from __future__ import annotations
@@ -211,7 +211,7 @@ def normalize_payment(raw: dict[str, Any]) -> dict[str, Any] | None:
     if created_ms is None:
         return None
 
-    # Local datetime for shift logic (floored to TIME_GRID_MINUTES slot for time-based tips).
+    # Local datetime for shift logic (time-based tips use minute-rounded local time, not the shift UI grid).
     try:
         utc_dt = datetime.fromtimestamp(created_ms / 1000.0, tz=timezone.utc)
         local_dt = utc_dt.astimezone(_app_tz())
@@ -338,17 +338,6 @@ def _parse_shift_hhmm(s: str) -> tuple[int, int]:
 def _minute_of(dt: datetime) -> datetime:
     """Floor to the minute (used for inclusive shift interval bounds)."""
     return dt.replace(second=0, microsecond=0)
-
-
-def _floor_local_to_time_grid_slot(dt: datetime) -> datetime:
-    """
-    Floor local clock time to the start of its ``TIME_GRID_MINUTES`` window.
-    Time-based tip allocation tests on-shift using this instant (same grid as shift HH:MM).
-    """
-    d = _minute_of(dt)
-    g = TIME_GRID_MINUTES
-    floored_min = (d.minute // g) * g
-    return d.replace(minute=floored_min)
 
 
 def _shift_blocks_to_minutes(
@@ -487,7 +476,7 @@ def run_allocation(
         local_raw = datetime.fromtimestamp(
             p["created_time_ms"] / 1000.0, tz=timezone.utc
         ).astimezone(tz)
-        tx_slot = _floor_local_to_time_grid_slot(local_raw)
+        tx_minute = _minute_of(local_raw)
         pid = p["payment_id"]
 
         if pid in manual_by_payment_id:
@@ -530,11 +519,11 @@ def run_allocation(
             })
             continue
 
-        # Default: time-based split — same grid as shifts (payment time floored to slot start).
+        # Default: time-based split at payment minute (shift boundaries are 15m in UI but intervals are minute-inclusive).
         count_time += 1
         working = [
             e for e in EMPLOYEES
-            if _is_working_at(tx_slot, shift_ranges[e])
+            if _is_working_at(tx_minute, shift_ranges[e])
         ]
         n_active = len(working)
         unassigned = n_active == 0
@@ -552,7 +541,6 @@ def run_allocation(
 
         tx_rows.append({
             "created_at_local": local_raw.isoformat(),
-            "time_match_slot_local": tx_slot.isoformat(),
             "payment_id": pid,
             "tip_amount_cents": tip_cents,
             "tip_amount_dollars": round(tip_cents / 100.0, 2),
@@ -1022,7 +1010,6 @@ def _csv_transactions(result: dict[str, Any]) -> str:
     w = csv.writer(buf)
     w.writerow([
         "created_at_local",
-        "time_match_slot_local",
         "payment_id",
         "allocation_mode",
         "tip_dollars",
@@ -1039,7 +1026,6 @@ def _csv_transactions(result: dict[str, Any]) -> str:
         mf_str = ";".join(f"{k}={v}" for k, v in sorted(mf.items()))
         w.writerow([
             row["created_at_local"],
-            row.get("time_match_slot_local", ""),
             row["payment_id"],
             row.get("allocation_mode", "time"),
             row["tip_amount_dollars"],

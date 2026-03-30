@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tips Board — daily ops</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260402" />
+  <link rel="stylesheet" href="/static/style.css?v=20260403" />
 </head>
 <body>
   <header class="header">
@@ -108,7 +108,7 @@
 
     <section class="card hidden" id="tx-section">
       <h2>Tip transactions (detail)</h2>
-      <p class="hint">Only payments with tips &gt; 0. <strong>Time</strong> rows: “on shift” uses the payment’s local time <strong>floored</strong> to a 15-minute slot (:00, :15, :30, :45), same as shift times. “Per-person (avg $)” is the even split before cent rounding; actual cents per person may differ by a penny.</p>
+      <p class="hint">Only payments with tips &gt; 0. <strong>Time</strong> rows: who is working uses the payment’s local time to the <strong>minute</strong> (seconds ignored). Shift start/end are picked in <strong>15-minute</strong> steps but the interval is inclusive minute-by-minute. “Per-person (avg $)” is the even split before cent rounding; actual cents per person may differ by a penny.</p>
       <div class="table-wrap table-wide">
         <table class="table" id="tx-table">
           <thead>
@@ -228,6 +228,6 @@
   <script>
     window.__EMPLOYEES__ = {{ employees | tojson }};
   </script>
-  <script src="/static/app.js?v=20260402"></script>
+  <script src="/static/app.js?v=20260403"></script>
 </body>
 </html>
