@@ -394,6 +394,19 @@ async function loadSettings() {
     }
     updateTestModeBanner();
 
+    const tzHint = el("server-tz-hint");
+    if (tzHint && data.timezone_effective) {
+      const eff = data.timezone_effective;
+      const raw = data.timezone_env;
+      if (raw) {
+        tzHint.textContent = `Active zone: «${eff}» (APP_TIMEZONE=${raw}). Clover “day” range, tip times, and shift matching all use this zone.`;
+      } else if (eff === "UTC") {
+        tzHint.textContent = `Active zone: UTC. Set APP_TIMEZONE=America/New_York in .env or Render, restart the app, hard-refresh this page (Cmd+Shift+R).`;
+      } else {
+        tzHint.textContent = `Active zone: «${eff}» (no APP_TIMEZONE — using the machine’s default zone). On Render this is often UTC; set APP_TIMEZONE=America/New_York there.`;
+      }
+    }
+
     const smtpCard = el("smtp-not-ready");
     const smtpBody = el("smtp-not-ready-body");
     if (smtpCard && smtpBody) {

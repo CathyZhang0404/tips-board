@@ -41,7 +41,11 @@
         </label>
         <button type="button" class="btn btn-primary" id="btn-refresh">Refresh Clover data</button>
       </div>
-      <p class="hint">Uses your computer’s local timezone for the calendar day and shift times.</p>
+      <p class="hint" id="server-tz-hint">
+        Clover day boundaries, payment times, and shift <code>HH:MM</code> all use the <strong>server</strong> time zone
+        (<code>APP_TIMEZONE</code> if set, e.g. <code>America/New_York</code>). The date you pick is a calendar date in that zone — not your browser’s clock.
+        Loading current zone…
+      </p>
     </section>
 
     <section class="card" id="shifts-section">

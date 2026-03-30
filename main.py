@@ -9,12 +9,14 @@ from __future__ import annotations
 
 import csv
 import io
+import logging
 import math
 import os
 from contextlib import asynccontextmanager
 from datetime import date, datetime, timedelta, timezone, tzinfo
 from pathlib import Path
 from typing import Any
+from zoneinfo import ZoneInfo
 
 import requests
 from dotenv import load_dotenv
@@ -27,6 +29,8 @@ from starlette.templating import Jinja2Templates
 
 import database
 import email_service
+
+_log = logging.getLogger(__name__)
 
 # -----------------------------------------------------------------------------
 # Config
@@ -91,6 +95,40 @@ app.mount("/static", StaticFiles(directory=str(BASE_DIR / "static")), name="stat
 # -----------------------------------------------------------------------------
 
 
+def _raw_app_timezone_env() -> str:
+    """Strip whitespace and common .env quotes from APP_TIMEZONE."""
+    return os.environ.get("APP_TIMEZONE", "").strip().strip('"').strip("'")
+
+
+def _app_tz() -> tzinfo:
+    """
+    Timezone for calendar-day bounds, shift HH:MM, and tip matching.
+
+    On laptops this follows the system clock. On Render (and many servers) the
+    default is UTC, so shift times would be wrong vs your shop — set APP_TIMEZONE
+    (IANA name, e.g. America/New_York, America/Los_Angeles).
+    """
+    tz_name = _raw_app_timezone_env()
+    if tz_name:
+        try:
+            return ZoneInfo(tz_name)
+        except Exception as exc:
+            _log.warning("APP_TIMEZONE=%r is invalid (%s); using system timezone.", tz_name, exc)
+    local = datetime.now().astimezone().tzinfo
+    return local if local is not None else timezone.utc
+
+
+def _app_timezone_meta() -> dict[str, str]:
+    """Resolved zone for API/UI (verify cloud config)."""
+    raw = _raw_app_timezone_env()
+    tz = _app_tz()
+    if isinstance(tz, ZoneInfo):
+        effective = tz.key
+    else:
+        effective = str(tz) if tz else "UTC"
+    return {"timezone_env": raw, "timezone_effective": effective}
+
+
 def _require_clover_config() -> tuple[str, str, str]:
     """Return (base_url, merchant_id, token) or raise HTTPException."""
     base = os.environ.get("CLOVER_BASE_URL", "").strip()
@@ -120,7 +158,7 @@ def _payments_url(base_url: str, merchant_id: str) -> str:
 
 def _local_day_bounds_ms(day: date) -> tuple[int, int]:
     """Local midnight .. next midnight as Clover ms (end exclusive)."""
-    tz = datetime.now().astimezone().tzinfo
+    tz = _app_tz()
     start = datetime(day.year, day.month, day.day, 0, 0, 0, tzinfo=tz)
     end = start + timedelta(days=1)
     return int(start.timestamp() * 1000), int(end.timestamp() * 1000)
@@ -161,7 +199,7 @@ def normalize_payment(raw: dict[str, Any]) -> dict[str, Any] | None:
     # Local datetime for shift logic (minute-rounded later).
     try:
         utc_dt = datetime.fromtimestamp(created_ms / 1000.0, tz=timezone.utc)
-        local_dt = utc_dt.astimezone()
+        local_dt = utc_dt.astimezone(_app_tz())
     except (OSError, OverflowError, ValueError):
         return None
 
@@ -382,7 +420,7 @@ def run_allocation(
     Those tips skip time-based rules and split by normalized weights only.
     """
     manual_by_payment_id = manual_by_payment_id or {}
-    tz = datetime.now().astimezone().tzinfo
+    tz = _app_tz()
 
     # Build per-employee minute ranges (only known employees).
     shift_ranges: dict[str, list[tuple[datetime, datetime]]] = {}
@@ -413,7 +451,7 @@ def run_allocation(
         tip_cents = p["tip_amount_cents"]
         local_raw = datetime.fromtimestamp(
             p["created_time_ms"] / 1000.0, tz=timezone.utc
-        ).astimezone()
+        ).astimezone(tz)
         tx_minute = _minute_of(local_raw)
         pid = p["payment_id"]
 
@@ -911,6 +949,7 @@ async def api_get_settings() -> JSONResponse:
         else:
             ordered.append({"employee_name": name, "employee_email": "", "is_active": True})
     smtp = email_service.smtp_env_status()
+    tz_meta = _app_timezone_meta()
     return JSONResponse(
         {
             "ok": True,
@@ -920,6 +959,8 @@ async def api_get_settings() -> JSONResponse:
             "smtp_ready": smtp["ready"],
             "smtp_missing": smtp["missing"],
             "smtp_hint": smtp["hint"],
+            "timezone_env": tz_meta["timezone_env"],
+            "timezone_effective": tz_meta["timezone_effective"],
         }
     )
 

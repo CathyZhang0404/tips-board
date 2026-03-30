@@ -14,6 +14,12 @@ Small **local** web app: pull payments from the **Clover REST API**, enter emplo
 | `CLOVER_MERCHANT_ID` | Your 13-character merchant id |
 | `CLOVER_API_TOKEN` | Bearer token (private / OAuth access token for that merchant) |
 
+**Business day & shifts (important on Render)**
+
+| Variable | Example | Purpose |
+|----------|---------|--------|
+| `APP_TIMEZONE` | `America/New_York` | [IANA timezone](https://en.wikipedia.org/wiki/List_of_tz_database_time_zones) for “which calendar day is this?” and for interpreting shift `HH:MM`. **Set this on Render** — the server defaults to **UTC**, so without it your shifts won’t line up with real payment times and tips can show **Unassigned**. |
+
 **SMTP (required to actually send mail)**
 
 | Variable | Example |
@@ -104,6 +110,7 @@ If your Git repo is the whole **`ds_projects`** (or **`CLOVER_Tips`**) folder in
    - `CLOVER_BASE_URL`
    - `CLOVER_MERCHANT_ID`
    - `CLOVER_API_TOKEN`
+   - **`APP_TIMEZONE`** (e.g. `America/New_York`) — **required** for correct tips on Render (UTC default)
    - `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
    - Optional: `MANAGER_EMAIL`, `TEST_MODE_EMAIL_ONLY` (see table above)
 
@@ -180,7 +187,7 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 
 ## Notes
 
-- Clover `createdTime` is in **milliseconds**; the backend uses your **local** timezone for the calendar day and shift matching.
+- Clover `createdTime` is in **milliseconds**; the backend uses **`APP_TIMEZONE`** if set, otherwise the **machine’s local timezone**, for calendar-day bounds and shift matching.
 - Comparisons use **minute** precision; shift start/end are **inclusive** for overlap.
 - Tip splitting uses **whole cents**; remainder cents are assigned deterministically (alphabetical by name).
 - Email sending is in **`email_service.py`**; if one employee send fails, others still run; the UI lists failures.
