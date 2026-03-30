@@ -1,0 +1,225 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Tips Board — daily ops</title>
+  <link rel="stylesheet" href="/static/style.css" />
+</head>
+<body>
+  <header class="header">
+    <h1>Tips Board</h1>
+    <p class="subtitle">Clover · shifts · tips · confirm · email · history</p>
+  </header>
+
+  <div id="test-mode-banner" class="test-mode-banner hidden">
+    <strong>Test email mode is ON</strong> — all employee and manager messages go to the manager inbox only.
+    Subject lines include <code>[TEST]</code> and the intended employee name. Turn off under <em>Employee Email Settings</em>.
+  </div>
+
+  <nav class="tabs-nav" id="tabs-nav">
+    <button type="button" class="tab-btn active" data-tab="daily">Daily Tips Board</button>
+    <button type="button" class="tab-btn" data-tab="confirm">Confirm &amp; Send</button>
+    <button type="button" class="tab-btn" data-tab="weekly">Weekly Summary</button>
+    <button type="button" class="tab-btn" data-tab="twoweek">Two-Week Summary</button>
+    <button type="button" class="tab-btn" data-tab="settings">Employee Email Settings</button>
+  </nav>
+
+  <main class="container">
+    <div id="global-error" class="banner banner-error hidden" role="alert"></div>
+    <div id="global-info" class="banner banner-info hidden"></div>
+    <div id="settings-saved" class="banner banner-success hidden" role="status"></div>
+
+    <!-- ========== Daily ========== -->
+    <div id="tab-daily" class="tab-panel">
+    <section class="card">
+      <h2>Date &amp; Clover data</h2>
+      <div class="row row-wrap">
+        <label class="field">
+          <span class="label">Date</span>
+          <input type="date" id="pick-date" />
+        </label>
+        <button type="button" class="btn btn-primary" id="btn-refresh">Refresh Clover data</button>
+      </div>
+      <p class="hint">Uses your computer’s local timezone for the calendar day and shift times.</p>
+    </section>
+
+    <section class="card" id="shifts-section">
+      <h2>Shifts (HH:MM, 24h)</h2>
+      <p class="hint">Add one or more blocks per employee. Leave blank if they did not work. Start and end minutes are <strong>inclusive</strong> for tips.</p>
+      <div id="shift-panels"></div>
+    </section>
+
+    <section class="card" id="manual-section">
+      <h2>Manual tip splits (optional)</h2>
+      <p class="hint">
+        Use this for <strong>party / special</strong> tips: choose a <strong>tipped</strong> payment from today’s Clover data, then enter each person’s <strong>share</strong>
+        (any positive numbers — only the <strong>ratios</strong> matter). Examples: three people each type <strong>1</strong> → each gets <strong>⅓</strong>; two people type <strong>1</strong> → 50/50; <strong>1</strong> and <strong>2</strong> → ⅓ and ⅔. We <strong>normalize</strong> shares to 100%.
+        Those payments <strong>ignore shift times</strong>; every other tipped payment still uses <strong>time + equal split among who was working</strong>.
+      </p>
+      <p class="hint banner-info-inline" id="manual-refresh-hint">
+        Refresh Clover data above first — then add a rule and pick a payment from the list.
+      </p>
+      <div id="manual-rules-host"></div>
+      <button type="button" class="btn btn-small" id="btn-add-manual">+ Add manual rule</button>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <button type="button" class="btn btn-success" id="btn-calculate">Calculate</button>
+        <button type="button" class="btn" id="btn-export-employees" disabled>Export employee summary CSV</button>
+        <button type="button" class="btn" id="btn-export-tx" disabled>Export transaction detail CSV</button>
+      </div>
+    </section>
+
+    <section class="card hidden" id="summary-section">
+      <h2>Summary</h2>
+      <div class="cards-grid" id="summary-cards"></div>
+    </section>
+
+    <section class="card hidden" id="recon-section">
+      <h2>Reconciliation</h2>
+      <p class="hint">Tip pool = sum of tips on payments with <code>tip &gt; 0</code> for the selected day. You should see <strong>difference = 0</strong> when math is closed.</p>
+      <table class="table" id="recon-table">
+        <tbody></tbody>
+      </table>
+    </section>
+
+    <section class="card hidden" id="employees-section">
+      <h2>Employee summary</h2>
+      <div class="table-wrap">
+        <table class="table" id="employees-table">
+          <thead>
+            <tr>
+              <th>Employee</th>
+              <th class="num">Allocated tips</th>
+              <th class="num"># tip transactions</th>
+              <th class="num">Scheduled hours</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+
+    <section class="card hidden" id="tx-section">
+      <h2>Tip transactions (detail)</h2>
+      <p class="hint">Only payments with tips &gt; 0. “Per-person (avg $)” is the even split before cent rounding; actual cents per person may differ by a penny.</p>
+      <div class="table-wrap table-wide">
+        <table class="table" id="tx-table">
+          <thead>
+            <tr>
+              <th>Mode</th>
+              <th>Time (local)</th>
+              <th>Payment ID</th>
+              <th class="num">Tip</th>
+              <th>Working / recipients</th>
+              <th class="num"># active</th>
+              <th class="num">Per-person (avg $)</th>
+              <th>Split (cents)</th>
+              <th>Unassigned</th>
+            </tr>
+          </thead>
+          <tbody></tbody>
+        </table>
+      </div>
+    </section>
+    </div>
+
+    <!-- ========== Confirm & Send ========== -->
+    <div id="tab-confirm" class="tab-panel hidden">
+      <section class="card hidden banner-smtp-warn" id="smtp-not-ready">
+        <h2>Email not configured</h2>
+        <p id="smtp-not-ready-body" class="hint">
+          Set SMTP variables in <code>CLOVER_Tips/.env</code> or <code>tip_dashboard/.env</code>, then <strong>restart the server</strong> (Ctrl+C, then <code>uvicorn</code> again).
+        </p>
+        <p class="hint"><strong>Gmail:</strong> <code>SMTP_HOST=smtp.gmail.com</code>, <code>SMTP_PORT=587</code>, your address as <code>SMTP_USERNAME</code> / <code>SMTP_FROM_EMAIL</code>, and an <a href="https://support.google.com/accounts/answer/185833" target="_blank" rel="noopener">App password</a> as <code>SMTP_PASSWORD</code> (not your normal Gmail password if 2FA is on).</p>
+      </section>
+      <section class="card">
+        <h2>Confirm &amp; Send</h2>
+        <p class="hint">Uses the <strong>same date, shifts, and manual rules</strong> as the Daily board. Run <strong>Calculate</strong> there first if you changed anything, then load preview here.</p>
+        <div class="row row-wrap">
+          <label class="field">
+            <span class="label">Work date</span>
+            <input type="date" id="confirm-date" />
+          </label>
+          <button type="button" class="btn btn-primary" id="btn-confirm-preview">Load preview</button>
+        </div>
+      </section>
+      <section class="card hidden" id="confirm-preview-section">
+        <h2>Final preview</h2>
+        <div id="confirm-preview-body"></div>
+      </section>
+      <section class="card" id="confirm-actions-section">
+        <p class="hint">
+          Click <strong>Load preview</strong> above to review numbers first (recommended). You can still confirm without it — the server uses the same shifts and manual rules as the Daily tab.
+          Saves to SQLite and sends email (configure SMTP in <code>.env</code>).
+        </p>
+        <button type="button" class="btn btn-success" id="btn-confirm-send">Confirm Today’s Shifts and Send Emails</button>
+        <div id="confirm-result" class="confirm-result" role="status" aria-live="polite"></div>
+      </section>
+    </div>
+
+    <!-- ========== Weekly ========== -->
+    <div id="tab-weekly" class="tab-panel hidden">
+      <section class="card">
+        <h2>Weekly summary</h2>
+        <p class="hint">Weeks are <strong>Monday–Sunday</strong>. Pick any day in the week — we use that calendar week. Only <strong>confirmed</strong> days count.</p>
+        <div class="row row-wrap">
+          <label class="field">
+            <span class="label">Week (any day)</span>
+            <input type="date" id="week-start" />
+          </label>
+          <button type="button" class="btn btn-primary" id="btn-weekly-load">Load</button>
+          <a class="btn" id="btn-weekly-csv" href="#">Export CSV</a>
+        </div>
+        <div id="weekly-out" class="summary-text"></div>
+      </section>
+    </div>
+
+    <!-- ========== Two-week ========== -->
+    <div id="tab-twoweek" class="tab-panel hidden">
+      <section class="card">
+        <h2>Two-week summary</h2>
+        <p class="hint">Two full <strong>Monday–Sunday</strong> weeks. Pick any day — the period starts on the <strong>Monday</strong> of that week (14 days). Confirmed records only.</p>
+        <div class="row row-wrap">
+          <label class="field">
+            <span class="label">Week (any day)</span>
+            <input type="date" id="twoweek-start" />
+          </label>
+          <button type="button" class="btn btn-primary" id="btn-twoweek-load">Load</button>
+          <a class="btn" id="btn-twoweek-csv" href="#">Export CSV</a>
+        </div>
+        <div id="twoweek-out" class="summary-text"></div>
+      </section>
+    </div>
+
+    <!-- ========== Settings ========== -->
+    <div id="tab-settings" class="tab-panel hidden">
+      <section class="card">
+        <h2>Employee email settings</h2>
+        <p class="hint">Manager address receives summaries. Empty employee email → on send, mail goes to manager (live mode) or all mail goes to manager (test mode).</p>
+        <label class="field" style="max-width:420px;margin-bottom:1rem;">
+          <span class="label">Manager email</span>
+          <input type="email" id="set-manager-email" class="inp-wide" autocomplete="email" />
+        </label>
+        <label class="checkbox-row">
+          <input type="checkbox" id="set-test-mode" />
+          <span><strong>Test mode:</strong> send all emails to manager email only (subjects prefixed with <code>[TEST]</code>).</span>
+        </label>
+        <div id="settings-employee-grid" class="settings-emp-grid"></div>
+        <button type="button" class="btn btn-success" id="btn-save-settings">Save settings</button>
+      </section>
+    </div>
+  </main>
+
+  <footer class="footer">
+    <span>Tips Board · SQLite · SMTP</span>
+  </footer>
+
+  <script>
+    window.__EMPLOYEES__ = {{ employees | tojson }};
+  </script>
+  <script src="/static/app.js"></script>
+</body>
+</html>

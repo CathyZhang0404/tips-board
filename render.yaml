@@ -1,0 +1,13 @@
+# Render Blueprint (optional): New + → Blueprint → connect repo (choose this file).
+# Or create a Web Service manually — same build/start commands as below.
+#
+# Monorepo: uncomment rootDir so the service builds from this app folder.
+services:
+  - type: web
+    name: tips-board
+    runtime: python
+    plan: free
+    # rootDir: CLOVER_Tips/tip_dashboard   # uncomment if repo root is e.g. ds_projects
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /health
