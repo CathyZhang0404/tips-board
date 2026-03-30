@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tips Board — daily ops</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260330" />
+  <link rel="stylesheet" href="/static/style.css?v=20260333" />
 </head>
 <body>
   <header class="header">
@@ -49,8 +49,8 @@
     </section>
 
     <section class="card" id="shifts-section">
-      <h2>Shifts (HH:MM, 24h)</h2>
-      <p class="hint">Add one or more blocks per employee. Leave blank if they did not work. Start and end minutes are <strong>inclusive</strong> for tips.</p>
+      <h2>Shifts (15-minute steps, 24h)</h2>
+      <p class="hint">Start/end use <strong>15-minute</strong> steps (:00, :15, :30, :45). Add one or more blocks per employee; leave blank if they did not work. Bounds are <strong>inclusive</strong> for matching tip times.</p>
       <div id="shift-panels"></div>
     </section>
 
@@ -108,7 +108,7 @@
 
     <section class="card hidden" id="tx-section">
       <h2>Tip transactions (detail)</h2>
-      <p class="hint">Only payments with tips &gt; 0. “Per-person (avg $)” is the even split before cent rounding; actual cents per person may differ by a penny.</p>
+      <p class="hint">Only payments with tips &gt; 0. <strong>Time</strong> rows: “on shift” uses the payment’s local time <strong>floored</strong> to a 15-minute slot (:00, :15, :30, :45), same as shift times. “Per-person (avg $)” is the even split before cent rounding; actual cents per person may differ by a penny.</p>
       <div class="table-wrap table-wide">
         <table class="table" id="tx-table">
           <thead>
@@ -228,6 +228,6 @@
   <script>
     window.__EMPLOYEES__ = {{ employees | tojson }};
   </script>
-  <script src="/static/app.js?v=20260330"></script>
+  <script src="/static/app.js?v=20260333"></script>
 </body>
 </html>

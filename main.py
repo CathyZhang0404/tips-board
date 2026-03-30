@@ -2,7 +2,7 @@
 Daily tip allocation dashboard — FastAPI backend.
 
 Pulls Clover payments for a chosen *local* calendar day, then splits tips
-among employees who were on shift at each transaction minute.
+among employees who were on shift in the same 15-minute slot as each tipped payment.
 """
 
 from __future__ import annotations
@@ -55,6 +55,9 @@ EMPLOYEES: list[str] = [
 ]
 
 PAGE_LIMIT = 1000
+
+# Shift start/end and time-based tip matching share this grid (UI time inputs use step=900 seconds).
+TIME_GRID_MINUTES = 15
 
 
 def _bootstrap_settings_from_env() -> None:
@@ -207,7 +210,7 @@ def normalize_payment(raw: dict[str, Any]) -> dict[str, Any] | None:
     if created_ms is None:
         return None
 
-    # Local datetime for shift logic (minute-rounded later).
+    # Local datetime for shift logic (floored to TIME_GRID_MINUTES slot for time-based tips).
     try:
         utc_dt = datetime.fromtimestamp(created_ms / 1000.0, tz=timezone.utc)
         local_dt = utc_dt.astimezone(_app_tz())
@@ -322,9 +325,29 @@ def _parse_hhmm(s: str) -> tuple[int, int]:
     return h, m
 
 
+def _parse_shift_hhmm(s: str) -> tuple[int, int]:
+    """Shift times must land on the same grid as ``TIME_GRID_MINUTES`` (e.g. :00, :15, :30, :45)."""
+    h, m = _parse_hhmm(s)
+    if m % TIME_GRID_MINUTES != 0:
+        grid = ", ".join(f":{x:02d}" for x in range(0, 60, TIME_GRID_MINUTES))
+        raise ValueError(f"Shift minute must be on the {TIME_GRID_MINUTES}m grid ({grid}), not {s!r}")
+    return h, m
+
+
 def _minute_of(dt: datetime) -> datetime:
-    """Floor to the minute (used for inclusive shift matching)."""
+    """Floor to the minute (used for inclusive shift interval bounds)."""
     return dt.replace(second=0, microsecond=0)
+
+
+def _floor_local_to_time_grid_slot(dt: datetime) -> datetime:
+    """
+    Floor local clock time to the start of its ``TIME_GRID_MINUTES`` window.
+    Time-based tip allocation tests on-shift using this instant (same grid as shift HH:MM).
+    """
+    d = _minute_of(dt)
+    g = TIME_GRID_MINUTES
+    floored_min = (d.minute // g) * g
+    return d.replace(minute=floored_min)
 
 
 def _shift_blocks_to_minutes(
@@ -338,8 +361,8 @@ def _shift_blocks_to_minutes(
     """
     ranges: list[tuple[datetime, datetime]] = []
     for b in blocks:
-        sh, sm = _parse_hhmm(b.get("start", ""))
-        eh, em = _parse_hhmm(b.get("end", ""))
+        sh, sm = _parse_shift_hhmm(b.get("start", ""))
+        eh, em = _parse_shift_hhmm(b.get("end", ""))
         start = datetime(day.year, day.month, day.day, sh, sm, 0, tzinfo=tz)
         end = datetime(day.year, day.month, day.day, eh, em, 0, tzinfo=tz)
         start_m = _minute_of(start)
@@ -354,7 +377,7 @@ def _is_working_at(
     tx_minute: datetime,
     ranges: list[tuple[datetime, datetime]],
 ) -> bool:
-    """True if tx_minute falls in any inclusive [start, end] minute block."""
+    """True if ``tx_minute`` falls in any inclusive [start, end] block (minute precision)."""
     for start_m, end_m in ranges:
         if start_m <= tx_minute <= end_m:
             return True
@@ -365,8 +388,8 @@ def _scheduled_hours(blocks: list[dict[str, str]], day: date, tz: tzinfo) -> flo
     """Total scheduled hours from shift blocks (simple end-start sum)."""
     total_sec = 0.0
     for b in blocks:
-        sh, sm = _parse_hhmm(b.get("start", ""))
-        eh, em = _parse_hhmm(b.get("end", ""))
+        sh, sm = _parse_shift_hhmm(b.get("start", ""))
+        eh, em = _parse_shift_hhmm(b.get("end", ""))
         start = datetime(day.year, day.month, day.day, sh, sm, 0, tzinfo=tz)
         end = datetime(day.year, day.month, day.day, eh, em, 0, tzinfo=tz)
         if end < start:
@@ -463,7 +486,7 @@ def run_allocation(
         local_raw = datetime.fromtimestamp(
             p["created_time_ms"] / 1000.0, tz=timezone.utc
         ).astimezone(tz)
-        tx_minute = _minute_of(local_raw)
+        tx_slot = _floor_local_to_time_grid_slot(local_raw)
         pid = p["payment_id"]
 
         if pid in manual_by_payment_id:
@@ -506,11 +529,11 @@ def run_allocation(
             })
             continue
 
-        # Default: time-based split among employees on shift at this minute.
+        # Default: time-based split — same grid as shifts (payment time floored to slot start).
         count_time += 1
         working = [
             e for e in EMPLOYEES
-            if _is_working_at(tx_minute, shift_ranges[e])
+            if _is_working_at(tx_slot, shift_ranges[e])
         ]
         n_active = len(working)
         unassigned = n_active == 0
@@ -528,6 +551,7 @@ def run_allocation(
 
         tx_rows.append({
             "created_at_local": local_raw.isoformat(),
+            "time_match_slot_local": tx_slot.isoformat(),
             "payment_id": pid,
             "tip_amount_cents": tip_cents,
             "tip_amount_dollars": round(tip_cents / 100.0, 2),
@@ -587,8 +611,8 @@ def run_allocation(
 
 
 class ShiftBlockIn(BaseModel):
-    start: str = Field(..., description="HH:MM local")
-    end: str = Field(..., description="HH:MM local")
+    start: str = Field(..., description="HH:MM local, minute multiple of 15")
+    end: str = Field(..., description="HH:MM local, minute multiple of 15")
 
 
 class ManualRuleIn(BaseModel):
@@ -997,6 +1021,7 @@ def _csv_transactions(result: dict[str, Any]) -> str:
     w = csv.writer(buf)
     w.writerow([
         "created_at_local",
+        "time_match_slot_local",
         "payment_id",
         "allocation_mode",
         "tip_dollars",
@@ -1013,6 +1038,7 @@ def _csv_transactions(result: dict[str, Any]) -> str:
         mf_str = ";".join(f"{k}={v}" for k, v in sorted(mf.items()))
         w.writerow([
             row["created_at_local"],
+            row.get("time_match_slot_local", ""),
             row["payment_id"],
             row.get("allocation_mode", "time"),
             row["tip_amount_dollars"],
