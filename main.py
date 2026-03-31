@@ -768,11 +768,7 @@ def _execute_calculate(body: CalculateIn) -> tuple[date, dict[str, list[dict[str
             detail="Enter at least one shift block before calculating.",
         )
     payments = fetch_clover_payments_for_date(target)
-    if not payments:
-        raise HTTPException(
-            status_code=404,
-            detail="No payments returned from Clover for this date (check date, merchant, or API limits).",
-        )
+    # Zero-payment days are valid: still show $0 tips, scheduled hours, confirm, and weekly totals.
     tipped_ids = {p["payment_id"] for p in payments if p["tip_amount_cents"] > 0}
     manual_map = _build_manual_map(body.manual_rules, tipped_ids)
     try:

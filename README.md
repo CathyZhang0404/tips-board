@@ -188,6 +188,7 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 
 ## Notes
 
+- If Clover returns **no payments** for a date (closed day, sync delay, etc.), **Calculate** still runs: tips are **$0**, **scheduled hours** come from shifts, and you can **Confirm** so **Weekly / two-week** summaries include that day’s hours. Manual rules that reference a payment id still require that id to exist among **tipped** payments that day (on an empty day, remove manual rules or leave them unset).
 - Clover `createdTime` is in **milliseconds**; the backend uses **`APP_TIMEZONE`** if set, otherwise the **machine’s local timezone**, for calendar-day bounds and shift matching.
 - Shift blocks use **15-minute** steps in the UI (`:00`, `:15`, `:30`, `:45`). **Time-based** tips still use **minute** precision: each payment’s local time is rounded down to the **minute** (no 15-minute snap), then we ask who is on shift in that inclusive interval.
 - Tip splitting uses **whole cents**; remainder cents are assigned deterministically (alphabetical by name).
