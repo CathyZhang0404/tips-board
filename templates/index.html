@@ -4,7 +4,7 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Tips Board — daily ops</title>
-  <link rel="stylesheet" href="/static/style.css?v=20260403" />
+  <link rel="stylesheet" href="/static/style.css?v=20260409" />
 </head>
 <body>
   <header class="header">
@@ -222,12 +222,12 @@
   </main>
 
   <footer class="footer">
-    <span>Tips Board · SQLite · email (Resend or SMTP)</span>
+    <span>Tips Board · SQLite · email (Resend or SMTP) · <a href="/health" target="_blank" rel="noopener">/health</a> (deploy commit on Render)</span>
   </footer>
 
   <script>
     window.__EMPLOYEES__ = {{ employees | tojson }};
   </script>
-  <script src="/static/app.js?v=20260403"></script>
+  <script src="/static/app.js?v=20260409"></script>
 </body>
 </html>

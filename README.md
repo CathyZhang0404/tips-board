@@ -140,6 +140,8 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 - [ ] **Refresh Clover data** works on the Daily tab
 - [ ] **Confirm & Send** (save + send emails) works (SMTP / Resend configured)
 
+**If the site “doesn’t update” after a git push:** open `https://<your-service>.onrender.com/health` — JSON should include `"commit":"xxxxxxx"` (short SHA from Render). It must match the latest commit on GitHub `main`. If it doesn’t, trigger **Manual Deploy** on the service (or **Clear build cache & deploy**). Local dev shows `{"ok":true}` only (no `commit`).
+
 ## UI tabs
 
 | Tab | Purpose |

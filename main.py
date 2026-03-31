@@ -60,6 +60,17 @@ PAGE_LIMIT = 1000
 TIME_GRID_MINUTES = 15
 
 
+def _deploy_git_short() -> str:
+    """Running deploy revision (Render sets ``RENDER_GIT_COMMIT``). Used by ``GET /health``."""
+    for key in ("RENDER_GIT_COMMIT", "SOURCE_VERSION", "VERCEL_GIT_COMMIT_SHA"):
+        raw = (os.environ.get(key) or "").strip()
+        if len(raw) >= 7:
+            return raw[:7]
+        if raw:
+            return raw
+    return ""
+
+
 def _bootstrap_settings_from_env() -> None:
     """
     Optional production overrides (e.g. Render): set on each process start if present.
@@ -935,8 +946,12 @@ def _send_confirmation_emails_bundle(
 
 @app.get("/health")
 async def health() -> JSONResponse:
-    """Lightweight check for uptime monitors (Render, etc.)."""
-    return JSONResponse({"ok": True})
+    """Uptime check; ``commit`` is set on Render when ``RENDER_GIT_COMMIT`` exists (verify deploy)."""
+    payload: dict[str, Any] = {"ok": True}
+    rev = _deploy_git_short()
+    if rev:
+        payload["commit"] = rev
+    return JSONResponse(payload)
 
 
 @app.get("/", response_class=HTMLResponse)
