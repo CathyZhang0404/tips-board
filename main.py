@@ -43,7 +43,7 @@ BASE_DIR = Path(__file__).resolve().parent
 load_dotenv(BASE_DIR.parent / ".env", override=True)
 load_dotenv(BASE_DIR / ".env", override=True)
 
-# Seven employees — order is used for display and deterministic cent splits.
+# Employees — order is used for display and deterministic cent splits.
 EMPLOYEES: list[str] = [
     "Cathy",
     "Olivia",
@@ -52,6 +52,7 @@ EMPLOYEES: list[str] = [
     "Gaby",
     "Constance",
     "Julie",
+    "Matteo",
 ]
 
 PAGE_LIMIT = 1000
@@ -1291,11 +1292,15 @@ def _fmt_us_short(d: date) -> str:
 @app.get("/api/summary/weekly")
 async def api_summary_weekly(week_start: str = Query(..., alias="week_start")) -> JSONResponse:
     ws = _monday_of_week_containing(_parse_date(week_start))
-    detail, totals = database.weekly_hours_detail(ws)
+    detail, totals_hours, totals_tips_cents = database.weekly_hours_detail(ws)
     # Pretty lines for UI
     lines: dict[str, list[str]] = {}
-    for emp, pairs in detail.items():
-        lines[emp] = [f"{_fmt_us_short(_parse_date(d))} {h} hours" for d, h in pairs]
+    for emp, triples in detail.items():
+        lines[emp] = [
+            f"{_fmt_us_short(_parse_date(d))} {h} hours · ${tc / 100.0:.2f} tips"
+            for d, h, tc in triples
+        ]
+    totals_tips_dollars = {k: round(v / 100.0, 2) for k, v in totals_tips_cents.items()}
     week_end = ws + timedelta(days=6)
     return JSONResponse(
         {
@@ -1303,7 +1308,8 @@ async def api_summary_weekly(week_start: str = Query(..., alias="week_start")) -
             "week_start": ws.isoformat(),
             "week_end": week_end.isoformat(),
             "by_employee_lines": lines,
-            "totals_hours": totals,
+            "totals_hours": totals_hours,
+            "totals_tips_dollars": totals_tips_dollars,
         }
     )
 
@@ -1311,14 +1317,16 @@ async def api_summary_weekly(week_start: str = Query(..., alias="week_start")) -
 @app.get("/api/summary/two-week")
 async def api_summary_two_week(period_start: str = Query(..., alias="period_start")) -> JSONResponse:
     ps = _monday_of_week_containing(_parse_date(period_start))
-    totals = database.two_week_totals(ps)
+    totals_hours, totals_tips_cents = database.two_week_totals(ps)
+    totals_tips_dollars = {k: round(v / 100.0, 2) for k, v in totals_tips_cents.items()}
     pe = ps + timedelta(days=13)
     return JSONResponse(
         {
             "ok": True,
             "period_start": ps.isoformat(),
             "period_end": pe.isoformat(),
-            "totals_hours": totals,
+            "totals_hours": totals_hours,
+            "totals_tips_dollars": totals_tips_dollars,
         }
     )
 
@@ -1326,17 +1334,17 @@ async def api_summary_two_week(period_start: str = Query(..., alias="period_star
 @app.get("/api/export/weekly.csv")
 async def export_weekly_csv(week_start: str = Query(..., alias="week_start")) -> StreamingResponse:
     ws = _monday_of_week_containing(_parse_date(week_start))
-    detail, totals = database.weekly_hours_detail(ws)
+    detail, totals_hours, totals_tips_cents = database.weekly_hours_detail(ws)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["employee", "work_date", "hours_worked"])
+    w.writerow(["employee", "work_date", "hours_worked", "tips_dollars"])
     for emp in sorted(detail.keys()):
-        for d_iso, h in detail[emp]:
-            w.writerow([emp, d_iso, f"{h:.2f}"])
+        for d_iso, h, tc in detail[emp]:
+            w.writerow([emp, d_iso, f"{h:.2f}", f"{tc / 100.0:.2f}"])
     w.writerow([])
-    w.writerow(["employee", "week_total_hours"])
-    for emp in sorted(totals.keys()):
-        w.writerow([emp, f"{totals[emp]:.2f}"])
+    w.writerow(["employee", "week_total_hours", "week_total_tips_dollars"])
+    for emp in sorted(totals_hours.keys()):
+        w.writerow([emp, f"{totals_hours[emp]:.2f}", f"{totals_tips_cents.get(emp, 0) / 100.0:.2f}"])
     data = buf.getvalue()
     return StreamingResponse(
         iter([data]),
@@ -1348,12 +1356,12 @@ async def export_weekly_csv(week_start: str = Query(..., alias="week_start")) ->
 @app.get("/api/export/two-week.csv")
 async def export_two_week_csv(period_start: str = Query(..., alias="period_start")) -> StreamingResponse:
     ps = _monday_of_week_containing(_parse_date(period_start))
-    totals = database.two_week_totals(ps)
+    totals_hours, totals_tips_cents = database.two_week_totals(ps)
     buf = io.StringIO()
     w = csv.writer(buf)
-    w.writerow(["employee", "total_hours_two_weeks"])
-    for emp in sorted(totals.keys()):
-        w.writerow([emp, f"{totals[emp]:.2f}"])
+    w.writerow(["employee", "total_hours_two_weeks", "total_tips_dollars_two_weeks"])
+    for emp in sorted(totals_hours.keys()):
+        w.writerow([emp, f"{totals_hours[emp]:.2f}", f"{totals_tips_cents.get(emp, 0) / 100.0:.2f}"])
     data = buf.getvalue()
     return StreamingResponse(
         iter([data]),

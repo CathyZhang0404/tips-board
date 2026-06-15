@@ -6,8 +6,19 @@ services:
   - type: web
     name: tips-board
     runtime: python
-    plan: free
+    # Persistent disk (below) requires a PAID instance type. Set the plan you pay for
+    # (e.g. starter / standard). A free instance cannot keep a disk, so data is wiped.
+    plan: starter
     # rootDir: CLOVER_Tips/tip_dashboard   # uncomment if repo root is e.g. ds_projects
     buildCommand: pip install -r requirements.txt
     startCommand: uvicorn main:app --host 0.0.0.0 --port $PORT
     healthCheckPath: /health
+    # Persistent disk so tip_board.db (confirmed days, settings) survives redeploys.
+    disk:
+      name: tips-data
+      mountPath: /var/data
+      sizeGB: 1
+    envVars:
+      # Keep the SQLite file on the mounted disk above (not the ephemeral container FS).
+      - key: DB_PATH
+        value: /var/data/tip_board.db

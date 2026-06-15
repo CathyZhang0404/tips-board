@@ -1,13 +1,16 @@
 """
 SQLite persistence for the Tips Board: settings, confirmed days, shift blocks.
 
-Uses a single file ``tip_board.db`` next to the app. All times for stored shifts
-are local HH:MM strings as entered in the UI.
+Stores everything in a single SQLite file. By default that file lives next to the
+app, but set ``DB_PATH`` (or ``DATABASE_PATH``) to put it on a **persistent disk**
+(e.g. Render paid disk mounted at ``/var/data``) so confirmed days survive
+redeploys/restarts. All times for stored shifts are local HH:MM strings.
 """
 
 from __future__ import annotations
 
 import json
+import os
 import sqlite3
 from collections import defaultdict
 from datetime import date, timedelta
@@ -17,7 +20,27 @@ from typing import Any
 # Default manager inbox for first run and test mode (see README).
 DEFAULT_MANAGER_EMAIL = "CATHYZHANG0404@GMAIL.COM"
 
-DB_PATH = Path(__file__).resolve().parent / "tip_board.db"
+
+def _resolve_db_path() -> Path:
+    """
+    Where to keep ``tip_board.db``.
+
+    On hosts with an ephemeral container filesystem (Render included, even on paid
+    plans), the file must live on a mounted **persistent disk** to survive deploys.
+    Point ``DB_PATH``/``DATABASE_PATH`` at that disk, e.g. ``/var/data/tip_board.db``.
+    Falls back to the app folder for local dev.
+    """
+    raw = (os.environ.get("DB_PATH") or os.environ.get("DATABASE_PATH") or "").strip().strip('"').strip("'")
+    path = Path(raw) if raw else (Path(__file__).resolve().parent / "tip_board.db")
+    # Make sure the parent directory exists (mounted disk path or local folder).
+    try:
+        path.parent.mkdir(parents=True, exist_ok=True)
+    except Exception:
+        pass
+    return path
+
+
+DB_PATH = _resolve_db_path()
 
 
 def get_conn() -> sqlite3.Connection:
@@ -42,7 +65,7 @@ def init_db(employee_names: list[str]) -> None:
             );
             CREATE TABLE IF NOT EXISTS app_settings (
                 id INTEGER PRIMARY KEY CHECK (id = 1),
-                test_mode INTEGER NOT NULL DEFAULT 1
+                test_mode INTEGER NOT NULL DEFAULT 0
             );
             CREATE TABLE IF NOT EXISTS daily_confirmation_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -88,7 +111,9 @@ def init_db(employee_names: list[str]) -> None:
             "INSERT OR IGNORE INTO manager_settings (id, manager_email) VALUES (1, ?)",
             (DEFAULT_MANAGER_EMAIL,),
         )
-        conn.execute("INSERT OR IGNORE INTO app_settings (id, test_mode) VALUES (1, 1)")
+        # Default to live mode: on Render free tier the DB disk is ephemeral and is
+        # re-seeded after every redeploy/sleep, so a default of 1 made test mode "come back".
+        conn.execute("INSERT OR IGNORE INTO app_settings (id, test_mode) VALUES (1, 0)")
         for name in employee_names:
             conn.execute(
                 "INSERT OR IGNORE INTO employee_settings (employee_name, employee_email, is_active) VALUES (?, '', 1)",
@@ -142,7 +167,7 @@ def set_manager_email(email: str) -> None:
 def get_test_mode() -> bool:
     with get_conn() as conn:
         row = conn.execute("SELECT test_mode FROM app_settings WHERE id = 1").fetchone()
-    return bool(row["test_mode"]) if row else True
+    return bool(row["test_mode"]) if row else False
 
 
 def set_test_mode(enabled: bool) -> None:
@@ -297,9 +322,15 @@ def update_confirmation_email_stats(log_id: int, email_sent_count: int, manager_
 # --- Summaries (confirmed data only) ---
 
 
-def weekly_hours_detail(week_start: date) -> tuple[dict[str, list[tuple[str, float]]], dict[str, float]]:
+def weekly_hours_detail(
+    week_start: date,
+) -> tuple[dict[str, list[tuple[str, float, int]]], dict[str, float], dict[str, int]]:
     """
-    Returns (per_employee list of (date_iso, hours), per_employee week total hours).
+    Returns:
+      - per_employee list of (date_iso, hours, tip_cents)
+      - per_employee week total hours
+      - per_employee week total tip cents
+
     Only ``confirmed_daily_record`` rows. ``week_start`` must be a **Monday**; range is Mon–Sun (7 days).
     """
     end = week_start + timedelta(days=6)
@@ -308,7 +339,7 @@ def weekly_hours_detail(week_start: date) -> tuple[dict[str, list[tuple[str, flo
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT work_date, employee_name, hours_worked
+            SELECT work_date, employee_name, hours_worked, tip_allocated_cents
             FROM confirmed_daily_record
             WHERE work_date >= ? AND work_date <= ?
             ORDER BY employee_name, work_date
@@ -316,27 +347,33 @@ def weekly_hours_detail(week_start: date) -> tuple[dict[str, list[tuple[str, flo
             (d0, d1),
         ).fetchall()
 
-    by_emp: dict[str, list[tuple[str, float]]] = defaultdict(list)
-    totals: dict[str, float] = defaultdict(float)
+    by_emp: dict[str, list[tuple[str, float, int]]] = defaultdict(list)
+    totals_hours: dict[str, float] = defaultdict(float)
+    totals_tips: dict[str, int] = defaultdict(int)
     for r in rows:
         wd = r["work_date"]
         en = r["employee_name"]
         h = round(float(r["hours_worked"]), 2)
-        by_emp[en].append((wd, h))
-        totals[en] += h
-    totals = {k: round(v, 2) for k, v in totals.items()}
-    return dict(by_emp), dict(totals)
+        tc = int(r["tip_allocated_cents"])
+        by_emp[en].append((wd, h, tc))
+        totals_hours[en] += h
+        totals_tips[en] += tc
+    totals_hours = {k: round(v, 2) for k, v in totals_hours.items()}
+    return dict(by_emp), dict(totals_hours), dict(totals_tips)
 
 
-def two_week_totals(period_start: date) -> dict[str, float]:
-    """``period_start`` should be a **Monday**; sums 14 days = two Mon–Sun weeks."""
+def two_week_totals(period_start: date) -> tuple[dict[str, float], dict[str, int]]:
+    """
+    ``period_start`` should be a **Monday**; sums 14 days = two Mon–Sun weeks.
+    Returns (per_employee total hours, per_employee total tip cents).
+    """
     end = period_start + timedelta(days=13)
     d0 = period_start.isoformat()
     d1 = end.isoformat()
     with get_conn() as conn:
         rows = conn.execute(
             """
-            SELECT employee_name, SUM(hours_worked) as th
+            SELECT employee_name, SUM(hours_worked) as th, SUM(tip_allocated_cents) as tt
             FROM confirmed_daily_record
             WHERE work_date >= ? AND work_date <= ?
             GROUP BY employee_name
@@ -344,4 +381,6 @@ def two_week_totals(period_start: date) -> dict[str, float]:
             """,
             (d0, d1),
         ).fetchall()
-    return {r["employee_name"]: round(float(r["th"]), 2) for r in rows}
+    hours = {r["employee_name"]: round(float(r["th"]), 2) for r in rows}
+    tips = {r["employee_name"]: int(r["tt"] or 0) for r in rows}
+    return hours, tips

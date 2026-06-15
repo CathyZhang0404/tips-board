@@ -39,8 +39,9 @@ Optional: put a `.env` file in **`tip_dashboard/`** or in the parent **`CLOVER_T
 
 | Variable | Purpose |
 |----------|---------|
+| `DB_PATH` (or `DATABASE_PATH`) | Where to store `tip_board.db`. Point at a **persistent disk** (e.g. `/var/data/tip_board.db`) so confirmed days survive redeploys. Default: next to the app (ephemeral on Render). |
 | `MANAGER_EMAIL` | If set (non-empty), overwrites the manager address in SQLite **on each server start** (handy when you do not rely on the UI to set it). |
-| `TEST_MODE_EMAIL_ONLY` | If this variable **exists**, forces test mode on startup: `true` / `1` / `yes` / `on` = on; anything else = off. If **omitted**, the database value (or UI) is left as-is. |
+| `TEST_MODE_EMAIL_ONLY` | If this variable **exists**, forces test mode on startup: `true` / `1` / `yes` / `on` = on; anything else = off. Set `false` to keep the app in **live** mode after every redeploy. If **omitted**, the database value (or UI) is left as-is. |
 
 > The UI still stores **employee** emails and **test mode** in SQLite. `MANAGER_EMAIL` / `TEST_MODE_EMAIL_ONLY` are optional **startup overrides** for hosting.
 
@@ -58,11 +59,17 @@ Open **http://127.0.0.1:8000** in your browser.
 
 ### 3. SQLite database
 
-Confirmed days and email settings live in **`tip_dashboard/tip_board.db`** (created on first run). The file is listed in `.gitignore` so it is not committed.
+Confirmed days and email settings live in a single SQLite file (default **`tip_dashboard/tip_board.db`**, created on first run). The local file is in `.gitignore` so it is not committed. Set **`DB_PATH`** (or `DATABASE_PATH`) to store it elsewhere, e.g. on a mounted disk: `DB_PATH=/var/data/tip_board.db`.
 
 On first run, the manager email is seeded to **`CATHYZHANG0404@GMAIL.COM`**; change it under **Employee Email Settings** and click **Save**.
 
-> **Cloud note (e.g. Render free tier):** The server disk is usually **ephemeral**. SQLite works for trying the app online, but **`tip_board.db` can be wiped** on redeploy, sleep, or instance replacement. For long-term production history, plan on **Postgres** (or another database) or a **paid persistent disk** — not required for this minimal deploy.
+> **Cloud note — the container filesystem is ephemeral (Render included, even on PAID plans).** If `tip_board.db` sits in the app folder, it is **wiped on every redeploy/restart**, so confirmed days disappear and weekly / two-week summaries miss days. **Fix:** attach a **persistent disk** (paid Render instance) and point the DB at it:
+>
+> 1. Render → your service → **Disks** → **Add Disk** (e.g. name `tips-data`, **Mount Path** `/var/data`, size 1 GB).
+> 2. Render → **Environment** → add **`DB_PATH`** = `/var/data/tip_board.db`.
+> 3. Save and let it redeploy. Existing in-app data does not migrate — re-confirm any days you need before the cutover, or copy the old file onto the disk.
+>
+> The included **`render.yaml`** already declares this disk + `DB_PATH` (set `plan` to the paid tier you use). Postgres is an alternative for heavier history but is not required.
 
 ## Deploy on Render (free tier)
 
@@ -112,6 +119,7 @@ If your Git repo is the whole **`ds_projects`** (or **`CLOVER_Tips`**) folder in
    - **`APP_TIMEZONE`** (e.g. `America/New_York`) — **required** for correct tips on Render (UTC default)
    - **On Render free:** `RESEND_API_KEY` + `RESEND_FROM_EMAIL` (SMTP to Gmail **will not work** — ports blocked).
    - **Local / paid Render:** `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_FROM_EMAIL`
+   - **`DB_PATH`** = `/var/data/tip_board.db` with a **persistent disk** mounted at `/var/data` (paid instance) — required so confirmed days are not wiped on redeploy.
    - Optional: `MANAGER_EMAIL`, `TEST_MODE_EMAIL_ONLY` (see table above)
 
    Use **Secret** / **mask** toggles for tokens and passwords.
@@ -148,8 +156,8 @@ This repo includes **`render.yaml`**. You can use **New +** → **Blueprint** an
 |-----|---------|
 | **Daily Tips Board** | Date, Clover refresh, shifts, manual splits, **Calculate**, exports |
 | **Confirm & Send** | Preview, **Confirm day (save)**, then **Send emails** (two steps) |
-| **Weekly Summary** | **Monday–Sunday** week; pick any day in the week — hours by employee (confirmed only) + CSV |
-| **Two-Week Summary** | Two full **Mon–Sun** weeks from the Monday of the week you pick + CSV |
+| **Weekly Summary** | **Monday–Sunday** week; pick any day in the week — hours **and tips** by employee (confirmed only) + CSV |
+| **Two-Week Summary** | Two full **Mon–Sun** weeks from the Monday of the week you pick — hours **and tips** totals + CSV |
 | **Employee Email Settings** | Manager email, per-employee emails, **Test mode** toggle |
 
 **Test mode:** When enabled, a yellow banner appears. All employee and manager messages go to the **manager** inbox only; subjects are prefixed with `[TEST]` and include the intended employee name. When test mode is off, mail goes to each employee’s saved address; empty employee addresses **fall back to the manager** so you can test before everyone’s email is filled in.

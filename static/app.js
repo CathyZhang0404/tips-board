@@ -694,17 +694,22 @@ function renderWeeklyText(data) {
   const host = el("weekly-out");
   let t = `<h3>Week (Mon–Sun) ${data.week_start} → ${data.week_end}</h3>`;
   const lines = data.by_employee_lines || {};
-  const totals = data.totals_hours || {};
+  const totalsH = data.totals_hours || {};
+  const totalsT = data.totals_tips_dollars || {};
   for (const name of Object.keys(lines).sort()) {
     t += `<h4>${name}</h4><ul>`;
     for (const line of lines[name]) t += `<li>${line}</li>`;
     t += `</ul>`;
   }
-  t += `<h4>Total for this week</h4><ul>`;
-  for (const name of Object.keys(totals).sort()) {
-    t += `<li>${name}: ${totals[name].toFixed(2)} hours</li>`;
+  t += `<h4>Total for this week</h4>`;
+  t += `<table class="table"><thead><tr><th>Employee</th><th class="num">Hours</th><th class="num">Tips</th></tr></thead><tbody>`;
+  const names = new Set([...Object.keys(totalsH), ...Object.keys(totalsT)]);
+  for (const name of [...names].sort()) {
+    const h = (totalsH[name] || 0).toFixed(2);
+    const tip = (totalsT[name] || 0).toFixed(2);
+    t += `<tr><td>${name}</td><td class="num">${h}</td><td class="num">$${tip}</td></tr>`;
   }
-  t += `</ul>`;
+  t += `</tbody></table>`;
   host.innerHTML = t;
 }
 
@@ -735,12 +740,16 @@ async function loadTwoWeek() {
       typeof data.detail === "string" ? data.detail : JSON.stringify(data.detail || "Error");
     return;
   }
-  const totals = data.totals_hours || {};
+  const totalsH = data.totals_hours || {};
+  const totalsT = data.totals_tips_dollars || {};
   const twInp = el("twoweek-start");
   if (twInp && data.period_start) twInp.value = data.period_start;
-  let html = `<p>Two weeks (Mon–Sun × 2): <strong>${data.period_start}</strong> → <strong>${data.period_end}</strong></p><h4>Total for those two weeks</h4><table class="table"><thead><tr><th>Employee</th><th class="num">Hours</th></tr></thead><tbody>`;
-  for (const name of Object.keys(totals).sort()) {
-    html += `<tr><td>${name}</td><td class="num">${totals[name].toFixed(2)}</td></tr>`;
+  let html = `<p>Two weeks (Mon–Sun × 2): <strong>${data.period_start}</strong> → <strong>${data.period_end}</strong></p><h4>Total for those two weeks</h4><table class="table"><thead><tr><th>Employee</th><th class="num">Hours</th><th class="num">Tips</th></tr></thead><tbody>`;
+  const names = new Set([...Object.keys(totalsH), ...Object.keys(totalsT)]);
+  for (const name of [...names].sort()) {
+    const h = (totalsH[name] || 0).toFixed(2);
+    const tip = (totalsT[name] || 0).toFixed(2);
+    html += `<tr><td>${name}</td><td class="num">${h}</td><td class="num">$${tip}</td></tr>`;
   }
   html += `</tbody></table>`;
   host.innerHTML = html;
