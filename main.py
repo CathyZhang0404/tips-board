@@ -49,7 +49,7 @@ EMPLOYEES: list[str] = [
     "Olivia",
     "Maren",
     "K",
-    "Gaby",
+    "Savana",
     "Constance",
     "Julie",
     "Matteo",

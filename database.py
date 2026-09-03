@@ -20,6 +20,12 @@ from typing import Any
 # Default manager inbox for first run and test mode (see README).
 DEFAULT_MANAGER_EMAIL = "CATHYZHANG0404@GMAIL.COM"
 
+# Seeded only when an employee row is first created; editing an address in the
+# Settings tab always wins afterwards.
+DEFAULT_EMPLOYEE_EMAILS: dict[str, str] = {
+    "Savana": "sfarmerartwork@gmail.com",
+}
+
 
 def _resolve_db_path() -> Path:
     """
@@ -116,8 +122,8 @@ def init_db(employee_names: list[str]) -> None:
         conn.execute("INSERT OR IGNORE INTO app_settings (id, test_mode) VALUES (1, 0)")
         for name in employee_names:
             conn.execute(
-                "INSERT OR IGNORE INTO employee_settings (employee_name, employee_email, is_active) VALUES (?, '', 1)",
-                (name,),
+                "INSERT OR IGNORE INTO employee_settings (employee_name, employee_email, is_active) VALUES (?, ?, 1)",
+                (name, DEFAULT_EMPLOYEE_EMAILS.get(name, "")),
             )
         conn.commit()
 
