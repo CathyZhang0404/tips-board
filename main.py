@@ -321,6 +321,17 @@ def fetch_clover_payments_for_date(target: date) -> list[dict[str, Any]]:
     return out
 
 
+def _countable_payments(payments: list[dict[str, Any]]) -> tuple[list[dict[str, Any]], int]:
+    """
+    Totals, tip pool, and allocation use result == SUCCESS only.
+
+    FAIL, VOIDED, and any other non-success attempt stay out of sales and tips.
+    The returned count is how many were excluded, so the UI can show they were dropped.
+    """
+    kept = [p for p in payments if p.get("result") == "SUCCESS"]
+    return kept, len(payments) - len(kept)
+
+
 # -----------------------------------------------------------------------------
 # Shift parsing & tip allocation
 # -----------------------------------------------------------------------------
@@ -779,7 +790,8 @@ def _execute_calculate(body: CalculateIn) -> tuple[date, dict[str, list[dict[str
             status_code=400,
             detail="Enter at least one shift block before calculating.",
         )
-    payments = fetch_clover_payments_for_date(target)
+    raw_payments = fetch_clover_payments_for_date(target)
+    payments, excluded_count = _countable_payments(raw_payments)
     # Zero-payment days are valid: still show $0 tips, scheduled hours, confirm, and weekly totals.
     tipped_ids = {p["payment_id"] for p in payments if p["tip_amount_cents"] > 0}
     manual_map = _build_manual_map(body.manual_rules, tipped_ids)
@@ -787,6 +799,7 @@ def _execute_calculate(body: CalculateIn) -> tuple[date, dict[str, list[dict[str
         result = run_allocation(target, payments, shifts_plain, manual_map)
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
+    result["payments_excluded_count"] = excluded_count
     return target, shifts_plain, manual_map, result
 
 
@@ -970,12 +983,13 @@ async def api_payments(date_str: str = Query(..., alias="date")) -> JSONResponse
     """Fetch Clover payments for a local calendar day (all amounts, not only tips)."""
     target = _parse_date(date_str)
     try:
-        payments = fetch_clover_payments_for_date(target)
+        raw_payments = fetch_clover_payments_for_date(target)
     except HTTPException:
         raise
     except Exception as exc:  # pragma: no cover
         raise HTTPException(status_code=500, detail=str(exc)) from exc
 
+    payments, excluded_count = _countable_payments(raw_payments)
     total_sales = sum(p["amount_cents"] for p in payments)
     total_tips = sum(p["tip_amount_cents"] for p in payments)
     with_tips = sum(1 for p in payments if p["tip_amount_cents"] > 0)
@@ -984,6 +998,7 @@ async def api_payments(date_str: str = Query(..., alias="date")) -> JSONResponse
         "ok": True,
         "date": target.isoformat(),
         "count": len(payments),
+        "excluded_count": excluded_count,
         "count_with_tips": with_tips,
         "total_sales_cents": total_sales,
         "total_sales_dollars": round(total_sales / 100.0, 2),

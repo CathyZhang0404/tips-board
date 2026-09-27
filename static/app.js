@@ -256,11 +256,16 @@ async function refreshClover() {
     }
     lastTippedPayments = (data.payments || []).filter((p) => p.tip_amount_cents > 0);
     repopulateManualPaymentSelects();
+    const excluded = Number(data.excluded_count) || 0;
+    const excludedNote = excluded
+      ? ` Excluded ${excluded} failed or voided (not in totals).`
+      : "";
     showBanner(
       "info",
       `Loaded ${data.count} payments (${data.count_with_tips} with tips). ` +
         `Sales $${data.total_sales_dollars?.toFixed?.(2) ?? data.total_sales_dollars} · ` +
-        `Tips $${data.total_tips_dollars?.toFixed?.(2) ?? data.total_tips_dollars}.`
+        `Tips $${data.total_tips_dollars?.toFixed?.(2) ?? data.total_tips_dollars}.` +
+        excludedNote
     );
   } catch (e) {
     showBanner("error", String(e));
@@ -271,7 +276,8 @@ function renderSummary(result) {
   const grid = el("summary-cards");
   const metrics = [
     ["Selected date", result.date],
-    ["Payments (all)", result.payments_count_all],
+    ["Payments (successful)", result.payments_count_all],
+    ["Excluded (failed/voided)", result.payments_excluded_count ?? 0],
     ["Payments (with tips)", result.payments_count_with_tips],
     ["Tips: time-based rows", result.tip_transactions_time_based ?? "—"],
     ["Tips: manual rows", result.tip_transactions_manual ?? "—"],
@@ -293,7 +299,7 @@ function renderSummary(result) {
 function renderRecon(result) {
   const tbody = el("recon-table").querySelector("tbody");
   const rows = [
-    ["Clover total tips (all payments, day)", `$${result.clover_total_tips_dollars.toFixed(2)}`, `(${result.clover_total_tips_cents} ¢)`],
+    ["Clover total tips (successful payments)", `$${result.clover_total_tips_dollars.toFixed(2)}`, `(${result.clover_total_tips_cents} ¢)`],
     ["Tip pool (only payments with tip > 0)", `$${result.tip_pool_dollars.toFixed(2)}`, `(${result.tip_pool_cents} ¢)`],
     ["Sum allocated to employees", `$${result.allocated_employee_total_dollars.toFixed(2)}`, `(${result.allocated_employee_total_cents} ¢)`],
     ["Unassigned tips", `$${result.unassigned_total_dollars.toFixed(2)}`, `(${result.unassigned_total_cents} ¢)`],
